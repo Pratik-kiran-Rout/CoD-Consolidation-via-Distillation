@@ -20,11 +20,11 @@ This document is the **definitive, final Master Plan V13**. It resolves every ma
 | Area | Flaw Caught in Final Review | Exact Resolution Locked into Master Plan V13 |
 | :--- | :--- | :--- |
 | **1. Granularity & Scope** | Block granularity ($B=32$) penalizes baselines on single-token needles and requires complex block pooling; learned `SR-TransMamba` adds bloat before gates pass. | **Primary Path is Token-Level ($B=1$) on Pretrained Hybrids (`Falcon-H1-0.5B` & `1.5B-Deep`).** Custom from-scratch `SR-TransMamba` is cut from the critical path. |
-| **2. Memory Accounting & Scale** | In `Falcon-H1-0.5B`, KV/token/layer $= 256$ floats while $S_P = 196,608$ floats ($768$ token-equivalents, not $32$), and 8K KV cache is only $151\text{ MB}$ with weak 16K 0.5B accuracy. | **Primary benchmark upgraded to `Falcon-H1-1.5B-Deep-Instruct` ($L=72$)** alongside `0.5B`; budgets reported as **% of Retained KV Cache ($10\% \dots 50\%$)** on tasks where Full-KV accuracy is high, plus a **Streaming Chunked-Prefill Variant**. |
+| **2. Memory Accounting & Scale** | In `Falcon-H1-0.5B`, KV/token/layer $= 256$ floats while $S_P = 196,608$ floats ($768$ token-equivalents, not $32$), and 8K KV cache is only $151\text{ MB}$ with weak 16K 0.5B accuracy. | **Primary benchmark upgraded to `Falcon-H1-1.5B-Deep-Instruct` ($L=66$)** alongside `0.5B`; budgets reported as **% of Retained KV Cache ($10\% \dots 50\%$)** on tasks where Full-KV accuracy is high, plus a **Streaming Chunked-Prefill Variant**. |
 | **3. Exact Tensor Hook in `FalconH1Mixer`** | Hooking `in_proj` misses $\mu$P multipliers (`ssm_in_multiplier`, 5-vector `ssm_multipliers`) and `conv1d + SiLU` on `xBC`. | Extract $(x_t, B_t, C_t, \Delta_t)$ **strictly after** $\mu$P scaling, `conv1d`, and `SiLU` inside `FalconH1Mixer`, and read $S_P$ directly from `cache_params.ssm_states[layer_idx]`. |
 | **4. $\rho_{\text{surv}}$ Denominator & Calibration** | Audit V2 mixed undecayed $\|u_{t,m}\|_2^2$ with decayed $\|\nu_{t,m}(P)\|_2^2$ and relied on Spearman correlation alone. | Use time-consistent **Decayed Signal-to-Interference Ratio** $\text{SIR}_{t,m}(P) = \frac{\alpha_{t \to P,m}^2 \|u_{t,m}\|_2^2}{\|\nu_{t,m}(P)\|_2^2 + \epsilon}$ + **Directional Cosine** $c_{t,m}(P)$ inside a **Calibrated Survival Predictor $\hat{p}_{\text{surv}}(t,m \mid P)$**, evaluated via **AUROC, ECE Calibration Curves, and Age-Controlled Partial Correlation**. |
 | **5. Proposition 2 Spectral Bound** | Claimed operator norm $1/(1+\lambda)$ instead of $\max_i \sigma_i/(\sigma_i^2+\lambda)$, used mean $\eta$ for non-symmetric $\Pi$, and averaged over isotropic queries. | Corrected to the **Exact Singular-Value Perturbation Bound** using $\max_i \frac{\sigma_i}{\sigma_i^2 + \lambda}$ and $\gamma_{\max, m}$, paired with **direct empirical measurement of collateral damage on stored pairs** in Gate 2. |
-| **6. Fair Consolidation Comparison & Learned Gate** | Consolidating 16 tokens saves only 16 KV token-equivalents, and hand-sweeping $(\gamma, \lambda)$ risks corrupting long-horizon heads. | Compare consolidating $k \in \{32, 64, 128\}$ evicted tokens against **keeping $k_{\text{eq}}$ extra KV tokens**, and train **1,728–3,456 scalar gates $\{\gamma_{l,m}, \lambda_{l,m}\}$ via 300-step Full-KV Teacher KL Distillation**. |
+| **6. Fair Consolidation Comparison & Learned Gate** | Consolidating 16 tokens saves only 16 KV token-equivalents, and hand-sweeping $(\gamma, \lambda)$ risks corrupting long-horizon heads. | Compare consolidating $k \in \{32, 64, 128\}$ evicted tokens against **keeping $k_{\text{eq}}$ extra KV tokens**, and train **1,728–3,168 scalar gates $\{\gamma_{l,m}, \lambda_{l,m}\}$ via 300-step Full-KV Teacher KL Distillation**. |
 | **7. De-Circularizing Gate 0** | R5 is synthetically constructed for survival to win, and $\alpha_{t \to P}$ correlates strongly with token age $(P - t)$. | Add **Natural-Text Prefix Recall + Partial Correlation controlling for Token Age $(P - t)$** in Gate 0 so $\hat{p}_{\text{surv}}$ must prove value beyond simple recency. |
 | **8. Built-In Fallback Paper** | If state consolidation yields small gains on pretrained models, the project still needs a guaranteed publication path. | Structure Phase 1–2 so that **Calibrated State Survival + Risk-Adaptive Token-Level `SA-SnapKV`** forms a complete, standalone paper even before Phase 3 consolidation is added. |
 
@@ -49,7 +49,7 @@ Existing KV eviction heuristics (`SnapKV`, `H2O`, `PyramidKV`, `KVzip`) ignore t
    $$s_{t,l} = D_{t,l} \cdot \big(1 - \bar{p}_{\text{surv}, t, l}(P)\big)$$
    and allocates per-layer KV budgets $K_l$ proportionally to each layer's **Expected State Forgetting Risk** $\mathcal{R}_l(P) = \sum_{t=0}^{P-1} D_{t,l}\big(1 - \bar{p}_{\text{surv}, t, l}(P)\big)$.
 3. **Pillar 3 — Teacher-Distilled Ridge State Consolidation (`Distilled-Consolidate`):**
-   Before evicting runner-up high-deficit tokens $\mathcal{T}_{\text{cons}, l}$ from the KV cache at position $P$, we consolidate their target values into the fast-decaying heads of $S_{P,l,m}$ via a batched ridge-regularized delta-rule update controlled by **per-layer, per-head scalar gates $\{\gamma_{l,m}, \lambda_{l,m}\}$** (only $1,728$ parameters on `0.5B` / $3,456$ parameters on `1.5B-Deep`), trained in 15 minutes via Full-KV teacher KL self-distillation.
+   Before evicting runner-up high-deficit tokens $\mathcal{T}_{\text{cons}, l}$ from the KV cache at position $P$, we consolidate their target values into the fast-decaying heads of $S_{P,l,m}$ via a batched ridge-regularized delta-rule update controlled by **per-layer, per-head scalar gates $\{\gamma_{l,m}, \lambda_{l,m}\}$** (only $1,728$ parameters on `0.5B` / $3,168$ parameters on `1.5B-Deep`), trained in 15 minutes via Full-KV teacher KL self-distillation.
 
 ---
 
@@ -61,18 +61,18 @@ From the official `tiiuae/Falcon-H1` model configurations, both models run paral
 
 | Specification | `Falcon-H1-0.5B-Instruct` (Fast Dev / Gate 1–2) | `Falcon-H1-1.5B-Deep-Instruct` (Primary Paper Benchmark) |
 | :--- | :--- | :--- |
-| **Layers ($L$)** | $36$ | $72$ |
-| **Hidden Dimension ($d_{\text{model}}$)** | $1024$ | $1536$ |
-| **Attention Heads ($H_q$ / $H_{kv}$) & $d_h$** | $8$ query / $2$ KV heads, $d_h = 64$ | $12$ query / $2$ KV heads, $d_h = 64$ |
-| **Mamba-2 Heads ($H_{\text{ssm}}$) & $d_{\text{head,ssm}}$** | $24$ heads, $d_{\text{head,ssm}} = 64$ | $32$ heads, $d_{\text{head,ssm}} = 64$ |
-| **Mamba-2 State Dim ($d_{\text{state}}$) & Groups** | $d_{\text{state}} = 128$, $G_{\text{ssm}} = 1$ | $d_{\text{state}} = 128$, $G_{\text{ssm}} = 1$ |
-| **KV Floats per Token per Layer** | $2 \times 2 \times 64 = 256\text{ floats}$ ($512\text{ B}$ in FP16) | $2 \times 2 \times 64 = 256\text{ floats}$ ($512\text{ B}$ in FP16) |
-| **SSM State $S_P$ Floats per Layer** | $24 \times 64 \times 128 = 196,608\text{ floats}$ ($768$ KV tokens) | $32 \times 64 \times 128 = 262,144\text{ floats}$ ($1,024$ KV tokens) |
+| **Layers ($L$)** | $36$ | $66$ |
+| **Hidden Dimension ($d_{\text{model}}$)** | $1024$ | $1280$ |
+| **Attention Heads ($H_q$ / $H_{kv}$) & $d_h$** | $8$ query / $2$ KV heads, $d_h = 64$ | $6$ query / $2$ KV heads, $d_h = 128$ |
+| **Mamba-2 Heads ($H_{\text{ssm}}$) & $d_{\text{head,ssm}}$** | $24$ heads, $d_{\text{head,ssm}} = 64$ | $24$ heads, $d_{\text{head,ssm}} = 64$ |
+| **Mamba-2 State Dim ($d_{\text{state}}$) & Groups** | $d_{\text{state}} = 128$, $G_{\text{ssm}} = 1$ | $d_{\text{state}} = 256$, $G_{\text{ssm}} = 1$ |
+| **KV Floats per Token per Layer** | $2 \times 2 \times 64 = 256\text{ floats}$ ($512\text{ B}$ in FP16) | $2 \times 2 \times 128 = 512\text{ floats}$ ($1024\text{ B}$ in FP16) |
+| **SSM State $S_P$ Floats per Layer** | $24 \times 64 \times 128 = 196,608\text{ floats}$ ($768$ KV tokens) | $24 \times 64 \times 256 = 393,216\text{ floats}$ ($768$ KV tokens) |
 | **Model Weights VRAM (FP16)** | $\approx 1.06\text{ GB}$ | $\approx 3.10\text{ GB}$ |
 
 ### 2.2 Why We Report Budget as `% of Retained KV Cache` + Multi-Stream Serving Throughput
 
-Because `Falcon-H1` uses Grouped-Query Attention with $H_{kv}=2$, a single sequence's KV cache at $P = 16,384$ on `1.5B-Deep` ($L=72$) occupies $72 \times 16,384 \times 512\text{ B} \approx 604\text{ MB}$ (or $4.83\text{ GB}$ at batch size $8$ / multi-agent serving). Therefore:
+Because `Falcon-H1-1.5B-Deep` uses Grouped-Query Attention with $H_{kv}=2$ and $d_h=128$ ($512$ floats $= 1024\text{ B}$ FP16 per token per layer), a single sequence's KV cache at $P = 16,384$ on `1.5B-Deep` ($L=66$) occupies $66 \times 16,384 \times 1024\text{ B} \approx 1.11\text{ GB}$ (or $8.86\text{ GB}$ at batch size $8$ / multi-agent serving). Therefore:
 1. **Standardized Reporting Metric:** Following `SnapKV`, `KVzip`, and `LORE-KV`, all primary curves report accuracy vs. **Retained KV Cache Ratio** $\rho_{\text{kv}} = K_{\text{total}} / P \in \{5\%, 10\%, 20\%, 35\%, 50\%, 100\%\}$, where the fixed SSM state $S_P$ is identical across all methods.
 2. **Iso-Memory Consolidation Audit:** When testing `Distilled-Consolidate` on $k_{\text{cons}} \in \{32, 64, 128\}$ evicted tokens at budget $K_{\text{ret}}$, we explicitly compare against **both** `SA-SnapKV(K_ret)` **and** `SA-SnapKV(K_ret + k_cons)` to quantify what fraction of exact KV retention is recovered at zero additional KV memory.
 3. **T4 FP16 Overflow Guard:** Because `Falcon-H1` was trained in `bfloat16` while Kaggle T4 GPUs (SM 7.5) only accelerate `float16` in hardware Tensor Cores, all Mamba-2 recurrences, $\mu$P-scaled projections, and state-survival calculations run inside an explicit `torch.float32` hook to guarantee zero FP16 overflow.
@@ -171,7 +171,7 @@ Let $\hat{B}_l = W \Sigma V^\top$ be the singular value decomposition of $\hat{B
    $$\big\| \hat{b}_\tau S_{P,l,m}^{\text{cons}} - \hat{b}_\tau S_{P,l,m} \big\|_2 \le \theta_\tau \cdot \gamma_{\max, l, m} \left(\max_{i \in \{1 \dots k\}} \frac{\sigma_i}{\sigma_i^2 + \lambda_{l,m}}\right) \big\| U_{l,m} - \hat{B}_l S_{P,l,m} \big\|_2$$
 
 #### 3. 300-Step Full-KV Teacher Distillation of $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$
-Instead of hand-tuning $\gamma$ and $\lambda$, we freeze 100% of the pretrained `Falcon-H1` backbone and optimize only $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($36 \times 24 \times 2 = 1,728$ scalars on `0.5B`; $72 \times 32 \times 2 = 4,608$ scalars on `1.5B-Deep`) for 300 steps (~15 minutes on 2× T4) on prospective context-question splits by minimizing the token-level KL divergence between the Full-KV teacher and the Evicted+Consolidated student over suffix tokens $t \ge P$:
+Instead of hand-tuning $\gamma$ and $\lambda$, we freeze 100% of the pretrained `Falcon-H1` backbone and optimize only $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($36 \times 24 \times 2 = 1,728$ scalars on `0.5B`; $66 \times 24 \times 2 = 3,168$ scalars on `1.5B-Deep`) for 300 steps (~15 minutes on 2× T4) on prospective context-question splits by minimizing the token-level KL divergence between the Full-KV teacher and the Evicted+Consolidated student over suffix tokens $t \ge P$:
 $$\mathcal{L}_{\text{distill}}(\tilde{\gamma}, \tilde{\lambda}) = \frac{1}{|T_{\text{suffix}}|} \sum_{t \in T_{\text{suffix}}} \text{KL}\Big( p_{\text{Full-KV}}(\cdot \mid x_{\le t}) \;\Big\|\; p_{\text{Evict+Cons}}(\cdot \mid x_{\le t}; \tilde{\gamma}, \tilde{\lambda}) \Big)$$
 * **Automatic Head Selection:** On long-horizon heads where $S_{P,l,m}$ already holds global context and consolidation causes collateral interference ($\theta_\tau > 0$), $\nabla \mathcal{L}_{\text{distill}}$ automatically drives $\gamma_{l,m} \to 0$. On fast-decaying heads where evicted tokens were lost, $\gamma_{l,m}$ stays positive.
 
@@ -256,7 +256,7 @@ Before running any benchmark sweep, all 10 unit tests must pass 100% green:
 ### Phase 3 (GATE 2): Teacher-Distilled State Consolidation & Iso-Memory Audit (Days 15–20)
 * **Tasks:**
   1. **Gate 2 Collateral Damage & $(k, \gamma, \lambda)$ Audit:** Before training gates, sweep $k \in \{16, 32, 64, 128\}$ on MQAR and RULER-MK2 and directly measure **both** (a) recall recovery on the $k$ consolidated runner-up tokens and (b) **empirical collateral recall drop on untouched stored tokens** $\tau \notin \mathcal{T}_{\text{cons}, l}$ vs. Proposition 1's bound.
-  2. **300-Step Teacher KL Distillation:** Train the $1,728$ (`0.5B`) / $4,608$ (`1.5B-Deep`) scalar parameters $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ on held-out prospective context-question splits (~15 minutes on 2× T4).
+  2. **300-Step Teacher KL Distillation:** Train the $1,728$ (`0.5B`) / $3,168$ (`1.5B-Deep`) scalar parameters $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ on held-out prospective context-question splits (~15 minutes on 2× T4).
   3. **Iso-Memory Fair Comparison:** Compare `SA-SnapKV(K_ret) + Distilled-Consolidate(k)` against **both** `SA-SnapKV(K_ret)` and **`SA-SnapKV(K_ret + k)`** (spending the extra memory on $k$ additional KV tokens).
 * **Hard Decision Gate 2:**
   * Keep `Distilled-Consolidate` as a headline contribution **only if** it beats `SA-SnapKV(K_ret)` with statistical significance ($p < 0.05$ paired bootstrap) at low budgets ($\rho_{\text{kv}} \in \{5\%, 10\%, 20\%\}$) without degrading untouched state memories. If consolidation gains are marginal, report Gate 2 as a rigorous negative/capacity-limit study and lead with Pillar 1 + Pillar 2.
@@ -267,7 +267,7 @@ Before running any benchmark sweep, all 10 unit tests must pass 100% green:
      * **Figure 1:** Layer-by-head survival heatmaps $\hat{p}_{\text{surv}}(t,l,m \mid P)$ on `Falcon-H1-1.5B-Deep` showing fast-decaying vs. long-horizon heads and why `DeltaS`/`HOLA` fail on R5a/R5b.
      * **Figure 2:** Reliability diagrams (ECE), AUROC, and age-controlled partial correlation of $\hat{p}_{\text{surv}}$ vs. state-only recall.
      * **Figure 3:** Prospective `RULER` & `SCBench` accuracy vs. Retained KV Ratio ($\rho_{\text{kv}} \in \{5\% \dots 50\%\}$) across all 10 policies on `Falcon-H1-1.5B-Deep` and `0.5B`.
-     * **Figure 4:** Risk-Adaptive Layer Budget Allocation $K_l$ profile across all 72 layers of `Falcon-H1-1.5B-Deep` vs. Uniform and `PyramidKV`.
+     * **Figure 4:** Risk-Adaptive Layer Budget Allocation $K_l$ profile across all 66 layers of `Falcon-H1-1.5B-Deep` vs. Uniform and `PyramidKV`.
      * **Figure 5:** Gate 2 Consolidation Curve — Consolidated token recovery vs. empirical collateral perturbation on stored memories + learned $\gamma_{l,m}$ distribution vs. head decay rate $A_m$.
      * **Figure 6:** Peak VRAM & Throughput of `SA-SnapKV-Stream` during 16K–32K chunked prefill on a single 16GB T4 GPU.
 
@@ -279,7 +279,7 @@ Before running any benchmark sweep, all 10 unit tests must pass 100% green:
 hybrid_state_eviction_v13/
 ├── configs/
 │   ├── falcon_h1_0.5b.yaml          # 36-layer Falcon-H1-0.5B-Instruct config
-│   └── falcon_h1_1.5b_deep.yaml     # 72-layer Falcon-H1-1.5B-Deep-Instruct config
+│   └── falcon_h1_1.5b_deep.yaml     # 66-layer Falcon-H1-1.5B-Deep-Instruct config
 ├── hooks/
 │   ├── falcon_h1_state_hook.py      # Exact post-conv1d / post-SiLU / post-muP FP32 tensor & S_P extractor
 │   └── survival_metrics.py          # Exact realized interference nu_{t,m}(P), SIR, cosine c_{t,m}, and Platt calibrator

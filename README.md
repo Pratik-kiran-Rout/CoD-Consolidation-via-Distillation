@@ -222,7 +222,7 @@ For singular values $\sigma_1 \ge \dots \ge \sigma_k > 0$ of $\hat{B}_l$, and an
    $$\big\| \hat{b}_\tau S_{P,l,m}^{\text{cons}} - \hat{b}_\tau S_{P,l,m} \big\|_2 \le \theta_\tau \cdot \gamma_{\max, l, m} \left(\max_i \frac{\sigma_i}{\sigma_i^2 + \lambda_{l,m}}\right) \big\| U_{l,m} - \hat{B}_l S_{P,l,m} \big\|_2$$
 
 #### 300-Step Teacher KL Distillation
-Backbone weights remain 100% frozen. Only $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($1,728$ scalars on 0.5B; $4,608$ on 1.5B-Deep) are trained in 15 minutes by minimizing KL divergence against the unevicted Full-KV teacher:
+Backbone weights remain 100% frozen. Only $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($1,728$ scalars on 0.5B; $3,168$ on 1.5B-Deep) are trained in 15 minutes by minimizing KL divergence against the unevicted Full-KV teacher:
 
 $$\mathcal{L}_{\text{distill}} = \frac{1}{|T_{\text{suffix}}|} \sum_{t \in T_{\text{suffix}}} \text{KL}\Big( p_{\text{Full-KV}}(\cdot \mid x_{\le t}) \;\Big\|\; p_{\text{Evict+Cons}}(\cdot \mid x_{\le t}; \tilde{\gamma}, \tilde{\lambda}) \Big)$$
 
@@ -276,22 +276,22 @@ CoD is benchmarked against 10 policies on identical backbones:
                Kaggle 2× NVIDIA T4 GPU Allocation (SM 7.5 Turing)
   ┌──────────────────────────────────────┐  ┌──────────────────────────────────────┐
   │            NVIDIA T4 #1              │  │            NVIDIA T4 #2              │
-  │  - Falcon-H1 Layers 0 ... 35 (FP16)  │  │  - Falcon-H1 Layers 36 ... 71 (FP16) │
+  │  - Falcon-H1 Layers 0 ... 32 (FP16)  │  │  - Falcon-H1 Layers 33 ... 65 (FP16) │
   │  - T4 FP32 State Recurrence Hook     │  │  - T4 FP32 State Recurrence Hook     │
-  │  - KV Cache Slices (0 ... 35)        │  │  - KV Cache Slices (36 ... 71)       │
+  │  - KV Cache Slices (0 ... 32)        │  │  - KV Cache Slices (33 ... 65)       │
   │  VRAM: ~3.8 GB (Safe headroom!)      │  │  VRAM: ~3.8 GB (Safe headroom!)      │
   └──────────────────────────────────────┘  └──────────────────────────────────────┘
 ```
 
-### Exact Memory Footprint (`Falcon-H1-1.5B-Deep-Instruct`, $L=72$)
+### Exact Memory Footprint (`Falcon-H1-1.5B-Deep-Instruct`, $L=66$)
 
 | Component | Dimensions / Formula | Size in Floats | VRAM Footprint |
 | :--- | :--- | :--- | :--- |
-| **Model Weights (FP16)** | $72\text{ layers}, d_{\text{model}}=1536$ | $\approx 1.55 \times 10^9$ | $\mathbf{3.10\text{ GB}}$ across $2\times\text{T4}$ |
-| **Recurrent State $S_P$** | $72 \times 32 \times 64 \times 128$ | $18,874,368\text{ floats}$ | $\mathbf{36.0\text{ MB}}$ (Constant for any length!) |
-| **Full KV Cache at 8K** | $72 \times 8192 \times (2 \times 2 \times 64)$ | $150,994,944\text{ floats}$ | $\mathbf{301.9\text{ MB}}$ ($2.41\text{ GB}$ at Batch 8) |
-| **Full KV Cache at 16K** | $72 \times 16384 \times (2 \times 2 \times 64)$ | $301,989,888\text{ floats}$ | $\mathbf{603.9\text{ MB}}$ ($4.83\text{ GB}$ at Batch 8) |
-| **CoD 20% Retained KV** | $20\% \times \text{KV Cache at 16K}$ | $60,397,978\text{ floats}$ | $\mathbf{120.8\text{ MB}}$ ($\mathbf{80\%}$ memory reduction!) |
+| **Model Weights (FP16)** | $66\text{ layers}, d_{\text{model}}=1280$ | $\approx 1.55 \times 10^9$ | $\mathbf{3.10\text{ GB}}$ across $2\times\text{T4}$ |
+| **Recurrent State $S_P$** | $66 \times 24 \times 64 \times 256$ | $25,952,256\text{ floats}$ | $\mathbf{51.9\text{ MB}}$ (FP16) / $\mathbf{103.8\text{ MB}}$ (FP32) |
+| **Full KV Cache at 8K** | $66 \times 8192 \times (2 \times 2 \times 128)$ | $276,824,064\text{ floats}$ | $\mathbf{553.6\text{ MB}}$ ($4.43\text{ GB}$ at Batch 8) |
+| **Full KV Cache at 16K** | $66 \times 16384 \times (2 \times 2 \times 128)$ | $553,648,128\text{ floats}$ | $\mathbf{1.11\text{ GB}}$ ($8.86\text{ GB}$ at Batch 8) |
+| **CoD 20% Retained KV** | $20\% \times \text{KV Cache at 16K}$ | $110,729,626\text{ floats}$ | $\mathbf{221.5\text{ MB}}$ ($\mathbf{80\%}$ memory reduction!) |
 
 ---
 
@@ -322,7 +322,7 @@ CoD — Consolidation via Distillation/
 ├── README.md                        # This document
 ├── configs/
 │   ├── falcon_h1_0.5b.yaml          # 36-layer Falcon-H1-0.5B-Instruct configuration
-│   └── falcon_h1_1.5b_deep.yaml     # 72-layer Falcon-H1-1.5B-Deep-Instruct configuration
+│   └── falcon_h1_1.5b_deep.yaml     # 66-layer Falcon-H1-1.5B-Deep-Instruct configuration
 ├── hooks/
 │   ├── __init__.py
 │   ├── falcon_h1_state_hook.py      # Post-conv / post-SiLU / post-μP FP32 tensor extractor

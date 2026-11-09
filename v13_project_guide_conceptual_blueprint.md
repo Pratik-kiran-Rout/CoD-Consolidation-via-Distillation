@@ -256,7 +256,7 @@ To prevent this, each layer and head has a consolidation gate $\gamma_{l,m} = \s
 
 Instead of guessing these parameters by hand, we perform a **300-step Full-KV Teacher KL Distillation**:
 1. We freeze the entire LLM backbone (zero weights updated).
-2. We only update the scalar gates $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($1,728$ parameters on `0.5B`; $4,608$ parameters on `1.5B-Deep`).
+2. We only update the scalar gates $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($1,728$ parameters on `0.5B`; $3,168$ parameters on `1.5B-Deep`).
 3. The model compares its evicted+consolidated output logits against the untouched Full-KV teacher model using KL divergence.
 
 ```
@@ -344,8 +344,8 @@ STAGE 4: Distilled State Consolidation & Suffix Generation
 | Dimension | Engineering Specification | Verification Status |
 | :--- | :--- | :--- |
 | **Compute Environment** | Kaggle Free Tier: $2 \times \text{NVIDIA T4 16GB GPUs}$ | Guaranteed fitting within 16GB per GPU via FP16 backbone + FP32 state hooks. |
-| **Backbone Models** | `Falcon-H1-0.5B-Instruct` & `Falcon-H1-1.5B-Deep-Instruct` | Verified official architectures; $L=36$ and $L=72$. |
+| **Backbone Models** | `Falcon-H1-0.5B-Instruct` & `Falcon-H1-1.5B-Deep-Instruct` | Verified official architectures; $L=36$ and $L=66$. |
 | **Pillar 1 Complexity** | $O(P \cdot d_{\text{state}} \cdot d_{\text{head}})$ matrix multiplication | Avoids naive $O(P^2)$ pairwise cross-terms; executes in $<50\text{ ms}$. |
 | **Pillar 2 Invariant** | Exact integer budget conservation $\sum_l K_l = K_{\text{total}}$ | Enforced via Largest Remainder Method; verified in Test 6. |
 | **Pillar 3 Bounds** | Operator norm $\|\hat{B}_l^\top (\hat{B}_l \hat{B}_l^\top + \lambda I)^{-1}\|_2 \le \frac{1}{2\sqrt{\lambda}}$ | Verified via Proposition 1 and Test 5 across random and empirical key matrices. |
-| **Distillation Footprint** | $1,728$ scalars (`0.5B`) / $4,608$ scalars (`1.5B-Deep`) | Backpropagation touches only scalar gates; zero gradients on backbone weights (Test 8). |
+| **Distillation Footprint** | $1,728$ scalars (`0.5B`) / $3,168$ scalars (`1.5B-Deep`) | Backpropagation touches only scalar gates; zero gradients on backbone weights (Test 8). |

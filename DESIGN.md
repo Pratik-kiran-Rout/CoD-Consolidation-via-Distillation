@@ -57,7 +57,7 @@ In every hybrid layer $l \in \{1, \dots, L\}$ across a prompt prefix $t \in \{0,
    $$s_{t,l} = D_{t,l} \cdot \big(1 - \bar{p}_{\text{surv}, t, l}(P)\big)$$
    where $D_{t,l}$ is prospective attention demand, and dynamically allocates per-layer KV budgets $K_l$ proportionally to each layer's **Expected State Forgetting Risk** $\mathcal{R}_l(P)$.
 3. **Pillar 3 — Teacher-Distilled Ridge State Consolidation (`Distilled-Consolidate`):**
-   Before evicting the top-$k$ runner-up tokens from the KV cache, writes their residual values into the recurrent state $S_{P,l,m}$ via a closed-form batched ridge regression update whose per-layer, per-head scalar gates $\{\gamma_{l,m}, \lambda_{l,m}\}$ ($1,728$ to $4,608$ parameters) are trained in 15 minutes via Full-KV teacher KL distillation.
+   Before evicting the top-$k$ runner-up tokens from the KV cache, writes their residual values into the recurrent state $S_{P,l,m}$ via a closed-form batched ridge regression update whose per-layer, per-head scalar gates $\{\gamma_{l,m}, \lambda_{l,m}\}$ ($1,728$ to $3,168$ parameters) are trained in 15 minutes via Full-KV teacher KL distillation.
 
 ---
 
@@ -77,27 +77,27 @@ The primary evaluation models are the open-weights hybrid models from Technology
 
 | Architectural Parameter | `Falcon-H1-0.5B-Instruct` (Fast Dev & Gates 1–2) | `Falcon-H1-1.5B-Deep-Instruct` (Primary Paper Benchmark) |
 | :--- | :--- | :--- |
-| **Hidden Layers ($L$)** | $36$ | $72$ |
-| **Hidden Dimension ($d_{\text{model}}$)** | $1024$ | $1536$ |
-| **Attention Query Heads ($H_q$)** | $8$ ($d_h = 64$) | $12$ ($d_h = 64$) |
+| **Hidden Layers ($L$)** | $36$ | $66$ |
+| **Hidden Dimension ($d_{\text{model}}$)** | $1024$ | $1280$ |
+| **Attention Query Heads ($H_q$)** | $8$ ($d_h = 64$) | $6$ ($d_h = 128$) |
 | **Attention KV Heads ($H_{kv}$)** | $2$ (Grouped-Query Attention) | $2$ (Grouped-Query Attention) |
-| **Mamba-2 Heads ($H_{\text{ssm}}$)** | $24$ ($d_{\text{head,ssm}} = 64$) | $32$ ($d_{\text{head,ssm}} = 64$) |
-| **Mamba-2 State Dimension ($d_{\text{state}}$)** | $128$ | $128$ |
+| **Mamba-2 Heads ($H_{\text{ssm}}$)** | $24$ ($d_{\text{head,ssm}} = 64$) | $24$ ($d_{\text{head,ssm}} = 64$) |
+| **Mamba-2 State Dimension ($d_{\text{state}}$)** | $128$ | $256$ |
 | **Mamba-2 Groups ($G_{\text{ssm}}$)** | $1$ (Shared $B_t, C_t$ across all SSM heads) | $1$ (Shared $B_t, C_t$ across all SSM heads) |
 | **Conv1D Kernel Size ($d_{\text{conv}}$)** | $4$ | $4$ |
 | **Weight Footprint (FP16)** | $\approx 1.06\text{ GB}$ | $\approx 3.10\text{ GB}$ |
-| **KV Cache Floats / Token / Layer** | $2 \times 2 \times 64 = 256\text{ floats}$ ($512\text{ B}$ in FP16) | $2 \times 2 \times 64 = 256\text{ floats}$ ($512\text{ B}$ in FP16) |
-| **SSM State $S_P$ Floats / Layer** | $24 \times 64 \times 128 = 196,608\text{ floats}$ | $32 \times 64 \times 128 = 262,144\text{ floats}$ |
-| **$S_P$ KV-Token Equivalence** | $\mathbf{768\text{ KV tokens}}$ | $\mathbf{1,024\text{ KV tokens}}$ |
+| **KV Cache Floats / Token / Layer** | $2 \times 2 \times 64 = 256\text{ floats}$ ($512\text{ B}$ in FP16) | $2 \times 2 \times 128 = 512\text{ floats}$ ($1024\text{ B}$ in FP16) |
+| **SSM State $S_P$ Floats / Layer** | $24 \times 64 \times 128 = 196,608\text{ floats}$ | $24 \times 64 \times 256 = 393,216\text{ floats}$ |
+| **$S_P$ KV-Token Equivalence** | $\mathbf{768\text{ KV tokens}}$ | $\mathbf{768\text{ KV tokens}}$ |
 
 ### 2.3 Memory Accounting & Budget Reporting
-Because $S_P$ is fixed in size regardless of prefix length $P$, its VRAM footprint is constant ($13.5\text{ MB}$ total across all 36 layers of 0.5B; $36.0\text{ MB}$ total across 72 layers of 1.5B-Deep).
+Because $S_P$ is fixed in size regardless of prefix length $P$, its VRAM footprint is constant ($13.5\text{ MB}$ total across all 36 layers of 0.5B; $51.9\text{ MB}$ in FP16 / $103.8\text{ MB}$ in FP32 total across 66 layers of 1.5B-Deep).
 
 In contrast, the Attention KV cache scales with sequence length and batch size:
 $$\text{VRAM}_{\text{KV}}(P, B) = B \cdot L \cdot P \cdot (2 \times H_{kv} \times d_h) \times 2\text{ bytes}$$
-At $P = 16,384$ on `Falcon-H1-1.5B-Deep` ($L=72$):
-- Single sequence ($B=1$): $\approx 604\text{ MB}$
-- Multi-query / multi-turn serving ($B=8$): $\approx 4.83\text{ GB}$
+At $P = 16,384$ on `Falcon-H1-1.5B-Deep` ($L=66$, $d_h=128$, $1024\text{ B}$/token/layer):
+- Single sequence ($B=1$): $\approx 1.11\text{ GB}$
+- Multi-query / multi-turn serving ($B=8$): $\approx 8.86\text{ GB}$
 
 All retention curves are reported as a percentage of retained candidate KV cache:
 $$\rho_{\text{kv}} = \frac{K_{\text{total}}}{L \cdot P} \in \{5\%, 10\%, 20\%, 35\%, 50\%, 100\%\}$$
@@ -269,7 +269,7 @@ $$S_{P,l,m}^{\text{cons}} = S_{P,l,m} + \hat{B}_l^\top \big(\hat{B}_l \hat{B}_l^
 *Significance:* This mathematical bound proves that ridge regularization ($\lambda > 0$) strictly limits collateral interference on previously stored memories, preventing state corruption during consolidation.
 
 #### 3. 300-Step Teacher KL Self-Distillation
-Rather than relying on manual heuristic tuning of $(\gamma, \lambda)$, CoD freezes 100% of the pretrained `Falcon-H1` backbone and trains only $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($1,728$ parameters on `0.5B`; $4,608$ parameters on `1.5B-Deep`):
+Rather than relying on manual heuristic tuning of $(\gamma, \lambda)$, CoD freezes 100% of the pretrained `Falcon-H1` backbone and trains only $\{\tilde{\gamma}_{l,m}, \tilde{\lambda}_{l,m}\}$ ($1,728$ parameters on `0.5B`; $3,168$ parameters on `1.5B-Deep`):
 $$\mathcal{L}_{\text{distill}}(\tilde{\gamma}, \tilde{\lambda}) = \frac{1}{|T_{\text{suffix}}|} \sum_{t \in T_{\text{suffix}}} \text{KL}\Big( p_{\text{Full-KV}}(\cdot \mid x_{\le t}) \;\Big\|\; p_{\text{Evict+Cons}}(\cdot \mid x_{\le t}; \tilde{\gamma}, \tilde{\lambda}) \Big)$$
 - **Automatic Head Selection:** On long-horizon heads where $S_P$ already holds global context, distillation drives $\gamma_{l,m} \to 0$ to prevent collateral damage. On fast-decaying heads where evicted tokens were lost, $\gamma_{l,m}$ stays active.
 - **Compute Efficiency:** Converges in **300 steps (~15 minutes on $2 \times \text{T4}$)**.
@@ -337,7 +337,7 @@ Tests `SA-SnapKV(K_ret) + Distilled-Consolidate(k)` directly against **`SA-SnapK
 hybrid_state_eviction_v13/
 ├── configs/
 │   ├── falcon_h1_0.5b.yaml          # Architecture & memory spec for 0.5B (36 layers)
-│   └── falcon_h1_1.5b_deep.yaml     # Architecture & memory spec for 1.5B-Deep (72 layers)
+│   └── falcon_h1_1.5b_deep.yaml     # Architecture & memory spec for 1.5B-Deep (66 layers)
 ├── hooks/
 │   ├── __init__.py
 │   ├── falcon_h1_state_hook.py      # Post-conv / post-SiLU / post-μP FP32 tensor hook
@@ -398,7 +398,7 @@ Phase 3: Gate 0 & Gate 1 Diagnostic Suite (Days 9–11)
 Phase 4: Token-Level SA-SnapKV & Risk-Adaptive Budgets (Days 12–15)
   └── Complete Standalone Pillar 1 + Pillar 2 Paper Milestone!
 Phase 5: Distilled Ridge State Consolidation & Teacher Distillation (Days 16–19)
-  └── Pass Test 5 & Test 8; Train 1,728/4,608 gates; Run Gate 2 Iso-Memory Audit
+  └── Pass Test 5 & Test 8; Train 1,728/3,168 gates; Run Gate 2 Iso-Memory Audit
 Phase 6: Full Prospective Sweeps & Paper Figures (Days 20–24)
   └── Generate Figures 1–6 across RULER, SCBench, and BABILong
 ```

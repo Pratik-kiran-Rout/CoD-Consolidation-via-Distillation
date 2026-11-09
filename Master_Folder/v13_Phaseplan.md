@@ -43,14 +43,14 @@ For any sequence prefix of length $P$, our configuration and memory accounting m
   $$L = 36, \quad d_{\text{model}} = 1024, \quad H_q = 8, \quad H_{kv} = 2, \quad d_h = 64$$
   $$H_{\text{ssm}} = 24, \quad d_{\text{head,ssm}} = 64, \quad d_{\text{state}} = 128, \quad G_{\text{ssm}} = 1, \quad d_{\text{conv}} = 4$$
 * **`Falcon-H1-1.5B-Deep-Instruct` (Primary Benchmark):**
-  $$L = 72, \quad d_{\text{model}} = 1536, \quad H_q = 12, \quad H_{kv} = 2, \quad d_h = 64$$
-  $$H_{\text{ssm}} = 32, \quad d_{\text{head,ssm}} = 64, \quad d_{\text{state}} = 128, \quad G_{\text{ssm}} = 1, \quad d_{\text{conv}} = 4$$
+  $$L = 66, \quad d_{\text{model}} = 1280, \quad H_q = 6, \quad H_{kv} = 2, \quad d_h = 128$$
+  $$H_{\text{ssm}} = 24, \quad d_{\text{head,ssm}} = 64, \quad d_{\text{state}} = 256, \quad G_{\text{ssm}} = 1, \quad d_{\text{conv}} = 4$$
 
 #### Exact Per-Layer Memory Accounting Formulas
 1. **Attention KV Floats per Token per Layer:**
-   $$\text{Floats}_{\text{KV/token/layer}} = 2 \times H_{kv} \times d_h = 2 \times 2 \times 64 = 256 \text{ floats } (512 \text{ Bytes in FP16})$$
+   $$\text{Floats}_{\text{KV/token/layer}} = 2 \times H_{kv} \times d_h = \begin{cases} 2 \times 2 \times 64 = 256 \text{ floats } (512 \text{ Bytes in FP16}) & \text{for } 0.5\text{B} \\ 2 \times 2 \times 128 = 512 \text{ floats } (1024 \text{ Bytes in FP16}) & \text{for } 1.5\text{B-Deep} \end{cases}$$
 2. **Recurrent State $S_P$ Floats per Layer & Token-Equivalent Size:**
-   $$\text{Floats}_{S_P\text{/layer}} = H_{\text{ssm}} \times d_{\text{head,ssm}} \times d_{\text{state}} = \begin{cases} 24 \times 64 \times 128 = 196,608 \text{ floats } (768 \text{ KV tokens}) & \text{for } 0.5\text{B} \\ 32 \times 64 \times 128 = 262,144 \text{ floats } (1,024 \text{ KV tokens}) & \text{for } 1.5\text{B-Deep} \end{cases}$$
+   $$\text{Floats}_{S_P\text{/layer}} = H_{\text{ssm}} \times d_{\text{head,ssm}} \times d_{\text{state}} = \begin{cases} 24 \times 64 \times 128 = 196,608 \text{ floats } (768 \text{ KV tokens}) & \text{for } 0.5\text{B} \\ 24 \times 64 \times 256 = 393,216 \text{ floats } (768 \text{ KV tokens}) & \text{for } 1.5\text{B-Deep} \end{cases}$$
 3. **Retained KV Cache Ratio ($\rho_{\text{kv}}$):**
    Given a prefix length $P$, sink count $N_{\text{sink}} = 4$, observation window $W_{\text{obs}} = 64$, and retained candidate budget $K_{\text{total}} = \sum_{l=1}^L K_l$, the standardized retention ratio is:
    $$\rho_{\text{kv}} = \frac{K_{\text{total}}}{L \cdot P} \in \{0.05, 0.10, 0.20, 0.35, 0.50, 1.00\}$$
@@ -313,7 +313,7 @@ Let $\hat{B}_l = W \Sigma V^\top$ be the SVD of $\hat{B}_l$ with singular values
 
 #### 3. 300-Step Full-KV Teacher KL Distillation (`distill_gates.py`)
 1. Freeze 100% of pretrained `Falcon-H1` parameters (`param.requires_grad = False`).
-2. Instantiate learnable parameter tensors `tilde_gamma` ($\mathbb{R}^{L \times H_{\text{ssm}}}$) and `tilde_lambda` ($\mathbb{R}^{L \times H_{\text{ssm}}}$) with `requires_grad = True` ($1,728$ total scalars on `0.5B`; $4,608$ total scalars on `1.5B-Deep`).
+2. Instantiate learnable parameter tensors `tilde_gamma` ($\mathbb{R}^{L \times H_{\text{ssm}}}$) and `tilde_lambda` ($\mathbb{R}^{L \times H_{\text{ssm}}}$) with `requires_grad = True` ($1,728$ total scalars on `0.5B`; $3,168$ total scalars on `1.5B-Deep` [$66 \times 24 \times 2$]).
 3. For 300 steps using AdamW ($\text{lr} = 3 \times 10^{-2}$) on prospective context-question sequences:
    * Run prefill $0 \dots P-1$ once to obtain the Full-KV teacher logits $z_{\text{Full-KV}, t}$ on suffix tokens $t \in T_{\text{suffix}}$ ($t \ge P$).
    * Apply `SA-SnapKV` eviction at position $P$, apply differentiable `ridge_consolidate(S_P, tilde_gamma, tilde_lambda)` to obtain $S_P^{\text{cons}}(\tilde{\gamma}, \tilde{\lambda})$, and run the student suffix forward pass $t \in T_{\text{suffix}}$ to obtain $z_{\text{Evict+Cons}, t}$.

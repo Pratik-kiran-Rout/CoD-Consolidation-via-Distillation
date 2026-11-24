@@ -999,6 +999,28 @@ from pathlib import Path
 
 PROJECT_ROOT = Path("/kaggle/working/hybrid_state_eviction_v13")
 
+# <--- THIS BLOCK WAS MISSING IN YOUR CELL 2.3 --->
+(PROJECT_ROOT / "hooks" / "__init__.py").write_text(
+    '"""Hooks package: Phase 0 T4 guards + Phase 1 state hook + Phase 2 survival metrics."""\n'
+    "from .phase0_core import (\n"
+    "    load_model_config, sync_arch_config_with_hf_config, verify_memory_accounting,\n"
+    "    compute_retained_kv_ratio, apply_t4_fp32_ssm_guard, load_falcon_h1_for_t4,\n"
+    "    ensure_unified_cache_views, force_ssm_states_fp32,\n"
+    ")\n"
+    "from .falcon_h1_state_hook import FalconH1StateHook, canonical_state\n"
+    "from .phase1_checks import (\n"
+    "    verify_capture, make_input_ids, reconstruct_terminal_state,\n"
+    "    stepwise_recurrence, readout_identity_error,\n"
+    ")\n"
+    "from .survival_metrics import (\n"
+    "    SurvivalPredictor, compute_readout_decomposition, compute_layer_survival_features,\n"
+    ")\n"
+    "from .phase2_checks import (\n"
+    "    test_03_sir_single_write_limit, test_04_r5b_equal_age_interference,\n"
+    "    audit_model_survival_profile,\n"
+    ")\n"
+)
+
 for m in [m for m in sys.modules if m == "hooks" or m.startswith("hooks.")]:
     del sys.modules[m]
 importlib.invalidate_caches()

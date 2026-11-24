@@ -1,0 +1,7 @@
+.git/
+.kaggle/
+.vscode/
+__pycache__/
+*.pyc
+*.pt
+scratch/
